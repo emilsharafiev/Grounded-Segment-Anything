@@ -5,11 +5,11 @@ import os
 import json
 from typing import Any
 import numpy as np
-import random
 import torch
 import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
+
 import cv2
 import matplotlib.pyplot as plt
 from cog import BasePredictor, Input, Path, BaseModel
@@ -18,9 +18,6 @@ from subprocess import call
 
 HOME = os.getcwd()
 os.chdir("GroundingDINO")
-call("pip install -q .", shell=True)
-os.chdir(HOME)
-os.chdir("segment_anything")
 call("pip install -q .", shell=True)
 os.chdir(HOME)
 
@@ -34,12 +31,8 @@ from GroundingDINO.groundingdino.util.utils import (
 )
 
 # segment anything
-from segment_anything import build_sam, build_sam_hq, SamPredictor
+from segment_anything import build_sam, SamPredictor
 
-import sys
-
-sys.path.append("Tag2Text")
-from models.tag2text import ram
 
 
 class ModelOutput(BaseModel):
@@ -65,14 +58,14 @@ class Predictor(BasePredictor):
             ]
         )
 
-        # load model
-        self.ram_model = ram(
-            pretrained="pretrained/ram_swin_large_14m.pth",
-            image_size=self.image_size,
-            vit="swin_l",
-        )
-        self.ram_model.eval()
-        self.ram_model = self.ram_model.to(self.device)
+        # # load model
+        # self.ram_model = ram(
+        #     pretrained="pretrained/ram_swin_large_14m.pth",
+        #     image_size=self.image_size,
+        #     vit="swin_l",
+        # )
+        # self.ram_model.eval()
+        # self.ram_model = self.ram_model.to(self.device)
 
         self.model = load_model(
             "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
@@ -83,22 +76,18 @@ class Predictor(BasePredictor):
         self.sam = SamPredictor(
             build_sam(checkpoint="pretrained/sam_vit_h_4b8939.pth").to(self.device)
         )
-        self.sam_hq = SamPredictor(
-            build_sam_hq(checkpoint="pretrained/sam_hq_vit_h.pth").to(self.device)
-        )
 
     def predict(
         self,
         input_image: Path = Input(description="Input image"),
-        use_sam_hq: bool = Input(
-            description="Use sam_hq instead of SAM for prediction", default=False
-        ),
+        object_prompt: str = Input(description="Object prompt"),
+        box_threshold: float = Input(default=0.25, description="Box threshold"),
+        text_threshold: float = Input(default=0.2, description="Text threshold"),
+        dilation: int = Input(default=0, description="Dilation"),
     ) -> ModelOutput:
         """Run a single prediction on the model"""
 
         # default settings
-        box_threshold = 0.25
-        text_threshold = 0.2
         iou_threshold = 0.5
 
         image_pil, image = load_image(str(input_image))
@@ -106,17 +95,12 @@ class Predictor(BasePredictor):
         raw_image = image_pil.resize((self.image_size, self.image_size))
         raw_image = self.transform(raw_image).unsqueeze(0).to(self.device)
 
-        with torch.no_grad():
-            tags, tags_chinese = self.ram_model.generate_tag(raw_image)
-
-        tags = tags[0].replace(" |", ",")
-
         # run grounding dino model
         boxes_filt, scores, pred_phrases = get_grounding_output(
-            self.model, image, tags, box_threshold, text_threshold, device=self.device
+            self.model, image, object_prompt, box_threshold, text_threshold, device=self.device
         )
 
-        predictor = self.sam_hq if use_sam_hq else self.sam
+        predictor = self.sam
 
         image = cv2.imread(str(input_image))
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -177,7 +161,7 @@ class Predictor(BasePredictor):
         plt.close()
 
         json_data = {
-            "tags": tags,
+            "tags": object_prompt,
             "mask": [{"value": value, "label": "background"}],
         }
         for label, box in zip(pred_phrases, boxes_filt):
@@ -198,7 +182,7 @@ class Predictor(BasePredictor):
             json.dump(json_data, f)
 
         return ModelOutput(
-            tags=tags,
+            tags=object_prompt,
             masked_img=Path(masks_path),
             rounding_box_img=Path(rounding_box_path),
             json_data=Path(json_path),
