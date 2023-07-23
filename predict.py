@@ -9,6 +9,7 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
+from typing import List
 
 import cv2
 import matplotlib.pyplot as plt
@@ -24,6 +25,7 @@ os.chdir(HOME)
 # Grounding DINO
 import GroundingDINO.groundingdino.datasets.transforms as T
 from GroundingDINO.groundingdino.models import build_model
+from GroundingDINO.groundingdino.util import box_ops
 from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import (
     clean_state_dict,
@@ -36,10 +38,7 @@ from segment_anything import build_sam, SamPredictor
 
 
 class ModelOutput(BaseModel):
-    tags: str
-    rounding_box_img: Path
-    masked_img: Path
-    json_data: Any
+    image_mask_path: List[Path]
 
 
 class Predictor(BasePredictor):
@@ -58,14 +57,6 @@ class Predictor(BasePredictor):
             ]
         )
 
-        # # load model
-        # self.ram_model = ram(
-        #     pretrained="pretrained/ram_swin_large_14m.pth",
-        #     image_size=self.image_size,
-        #     vit="swin_l",
-        # )
-        # self.ram_model.eval()
-        # self.ram_model = self.ram_model.to(self.device)
 
         self.model = load_model(
             "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
@@ -86,107 +77,39 @@ class Predictor(BasePredictor):
         dilation: int = Input(default=0, description="Dilation"),
     ) -> ModelOutput:
         """Run a single prediction on the model"""
-
-        # default settings
-        iou_threshold = 0.5
-
-        image_pil, image = load_image(str(input_image))
-
-        raw_image = image_pil.resize((self.image_size, self.image_size))
-        raw_image = self.transform(raw_image).unsqueeze(0).to(self.device)
-
-        # run grounding dino model
+        print("Running prediction")
+        image_source, image = load_image(str(input_image))
+        print("Loaded image")
         boxes_filt, scores, pred_phrases = get_grounding_output(
-            self.model, image, object_prompt, box_threshold, text_threshold, device=self.device
+            self.model, image, object_prompt, box_threshold, text_threshold
         )
+        print("Got grounding output")
 
-        predictor = self.sam
-
-        image = cv2.imread(str(input_image))
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        predictor.set_image(image)
-
-        size = image_pil.size
-        H, W = size[1], size[0]
-        for i in range(boxes_filt.size(0)):
-            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-            boxes_filt[i][2:] += boxes_filt[i][:2]
-
-        boxes_filt = boxes_filt.cpu()
-        # use NMS to handle overlapped boxes
-        print(f"Before NMS: {boxes_filt.shape[0]} boxes")
-        nms_idx = (
-            torchvision.ops.nms(boxes_filt, scores, iou_threshold).numpy().tolist()
-        )
-        boxes_filt = boxes_filt[nms_idx]
-        pred_phrases = [pred_phrases[idx] for idx in nms_idx]
-        print(f"After NMS: {boxes_filt.shape[0]} boxes")
-
-        transformed_boxes = predictor.transform.apply_boxes_torch(
-            boxes_filt, image.shape[:2]
-        ).to(self.device)
-
-        masks, _, _ = predictor.predict_torch(
-            point_coords=None,
-            point_labels=None,
-            boxes=transformed_boxes.to(self.device),
-            multimask_output=False,
-        )
-
-        # draw output image
-        plt.figure(figsize=(10, 10))
-        for mask in masks:
-            show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-        for box, label in zip(boxes_filt, pred_phrases):
-            show_box(box.numpy(), plt.gca(), label)
-
-        rounding_box_path = "/tmp/automatic_label_output.png"
-        plt.axis("off")
-        plt.savefig(
-            Path(rounding_box_path), bbox_inches="tight", dpi=300, pad_inches=0.0
-        )
-        plt.close()
-
-        # save masks and json data
-        value = 0  # 0 for background
-        mask_img = torch.zeros(masks.shape[-2:])
-        for idx, mask in enumerate(masks):
-            mask_img[mask.cpu().numpy()[0] == True] = value + idx + 1
-        plt.figure(figsize=(10, 10))
-        plt.imshow(mask_img.numpy())
-        plt.axis("off")
-        masks_path = "/tmp/mask.png"
-        plt.savefig(masks_path, bbox_inches="tight", dpi=300, pad_inches=0.0)
-        plt.close()
-
-        json_data = {
-            "tags": object_prompt,
-            "mask": [{"value": value, "label": "background"}],
-        }
-        for label, box in zip(pred_phrases, boxes_filt):
-            value += 1
-            name, logit = label.split("(")
-            logit = logit[:-1]  # the last is ')'
-            json_data["mask"].append(
-                {
-                    "value": value,
-                    "label": name,
-                    "logit": float(logit),
-                    "box": box.numpy().tolist(),
-                }
-            )
-
-        json_path = "/tmp/label.json"
-        with open(json_path, "w") as f:
-            json.dump(json_data, f)
-
-        return ModelOutput(
-            tags=object_prompt,
-            masked_img=Path(masks_path),
-            rounding_box_img=Path(rounding_box_path),
-            json_data=Path(json_path),
-        )
+        self.sam.set_image(image_source)
+        H, W, _ = image_source.shape
+        print("H, W", H, W)
+        boxes_xyxy = box_ops.box_cxcywh_to_xyxy(boxes_filt) * torch.Tensor([W, H, W, H])
+        print("boxes_xyxy", boxes_xyxy)
+        transformed_boxes = self.sam.transform.apply_boxes_torch(boxes_xyxy, image_source.shape[:2]).to(self.device)
+        masks, _, _ = self.sam.predict_torch(
+                    point_coords = None,
+                    point_labels = None,
+                    boxes = transformed_boxes,
+                    multimask_output = False,
+                )
+        print("Got masks")
+        image_masks = [i[0].cpu().numpy() for i in masks]
+        if dilation > 0:
+            kernel = np.ones((dilation, dilation), np.uint8)
+            image_masks = [cv2.dilate(i, kernel, iterations=1) for i in image_masks]
+        image_mask_pils = [Image.fromarray(i) for i in image_masks]
+        image_mask_pil_paths = []
+        # save to tmp file
+        for i, image_mask_pil in enumerate(image_mask_pils):
+            image_mask_pil.save(f"/tmp/image_mask{i}.png")
+            image_mask_pil_paths.append(Path(f"/tmp/image_mask{i}.png"))
+        print("Saved image mask")
+        return ModelOutput(image_mask_path=image_mask_pil_paths)
 
 
 def get_grounding_output(
@@ -213,14 +136,14 @@ def get_grounding_output(
     logits_filt.shape[0]
 
     # get phrase
-    tokenlizer = model.tokenizer
-    tokenized = tokenlizer(caption)
+    tokenizer = model.tokenizer
+    tokenized = tokenizer(caption)
     # build pred
     pred_phrases = []
     scores = []
     for logit, box in zip(logits_filt, boxes_filt):
         pred_phrase = get_phrases_from_posmap(
-            logit > text_threshold, tokenized, tokenlizer
+            logit > text_threshold, tokenized, tokenizer
         )
         pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
         scores.append(logit.max().item())
