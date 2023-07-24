@@ -101,7 +101,7 @@ class Predictor(BasePredictor):
                     multimask_output = False,
                 )
         print("Got masks")
-        image_masks = [i[0].cpu().numpy() for i in masks]
+        image_masks = [i.cpu().numpy() for i in masks]
         if dilation > 0:
             kernel = np.ones((dilation, dilation), np.uint8)
             image_masks = [cv2.dilate(i, kernel, iterations=1) for i in image_masks]
