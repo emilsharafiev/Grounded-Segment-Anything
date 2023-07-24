@@ -85,12 +85,15 @@ class Predictor(BasePredictor):
         )
         print("Got grounding output")
 
-        self.sam.set_image(image_source)
-        H, W, _ = image_source.shape
+        self.sam.set_image(image)
+        size = image_source.size
+        H, W = size[1], size[0]
         print("H, W", H, W)
         boxes_xyxy = box_ops.box_cxcywh_to_xyxy(boxes_filt) * torch.Tensor([W, H, W, H])
         print("boxes_xyxy", boxes_xyxy)
-        transformed_boxes = self.sam.transform.apply_boxes_torch(boxes_xyxy, image_source.shape[:2]).to(self.device)
+        transformed_boxes = self.sam.transform.apply_boxes_torch(boxes_xyxy, image.shape[:2]).to(self.device)
+
+
         masks, _, _ = self.sam.predict_torch(
                     point_coords = None,
                     point_labels = None,
