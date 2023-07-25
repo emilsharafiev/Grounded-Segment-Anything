@@ -85,13 +85,13 @@ class Predictor(BasePredictor):
         )
         print("Got grounding output")
 
-        self.sam.set_image(image)
+        self.sam.set_image(np.array(image_source))
         size = image_source.size
         H, W = size[1], size[0]
-        print("H, W", H, W)
+        print(f"H:{H}, W:{W}")
         boxes_xyxy = box_ops.box_cxcywh_to_xyxy(boxes_filt) * torch.Tensor([W, H, W, H])
-        print("boxes_xyxy", boxes_xyxy)
-        transformed_boxes = self.sam.transform.apply_boxes_torch(boxes_xyxy, image.shape[:2]).to(self.device)
+        print(f"boxes_xyxy shape: {boxes_xyxy.size()}")
+        transformed_boxes = self.sam.transform.apply_boxes_torch(boxes_xyxy, image_source.size[::-1]).to(self.device)
 
 
         masks, _, _ = self.sam.predict_torch(
@@ -101,7 +101,7 @@ class Predictor(BasePredictor):
                     multimask_output = False,
                 )
         print("Got masks")
-        image_masks = [i.cpu().numpy() for i in masks]
+        image_masks = [i.cpu().numpy()[0] for i in masks]
         if dilation > 0:
             kernel = np.ones((dilation, dilation), np.uint8)
             image_masks = [cv2.dilate(i, kernel, iterations=1) for i in image_masks]
