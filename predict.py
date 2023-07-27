@@ -105,7 +105,7 @@ class Predictor(BasePredictor):
         if dilation > 0:
             kernel = np.ones((dilation, dilation), np.uint8)
             image_masks = [cv2.dilate(np.uint8(i), kernel, iterations=1) for i in image_masks]
-        image_mask_pils = [Image.fromarray(i) for i in image_masks]
+        image_mask_pils = [Image.fromarray(i*255) for i in image_masks]
         image_mask_pil_paths = []
         # save to tmp file
         for i, image_mask_pil in enumerate(image_mask_pils):
