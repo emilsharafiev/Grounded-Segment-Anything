@@ -9,7 +9,7 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
-from typing import List
+from typing import List, Tuple
 
 import cv2
 import matplotlib.pyplot as plt
@@ -38,7 +38,7 @@ from segment_anything import build_sam, SamPredictor
 
 
 class ModelOutput(BaseModel):
-    image_mask_path: List[Path]
+    image_mask_path: List[Tuple[str, Path]]
 
 
 class Predictor(BasePredictor):
@@ -108,9 +108,9 @@ class Predictor(BasePredictor):
         image_mask_pils = [Image.fromarray(i*255) for i in image_masks]
         image_mask_pil_paths = []
         # save to tmp file
-        for i, image_mask_pil in enumerate(image_mask_pils):
+        for i, (phrase, image_mask_pil) in enumerate(zip(pred_phrases, image_mask_pils)):
             image_mask_pil.save(f"/tmp/image_mask{i}.png")
-            image_mask_pil_paths.append(Path(f"/tmp/image_mask{i}.png"))
+            image_mask_pil_paths.append((phrase, Path(f"/tmp/image_mask{i}.png")))
         print("Saved image mask")
         return ModelOutput(image_mask_path=image_mask_pil_paths)
 
