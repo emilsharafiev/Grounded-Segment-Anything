@@ -38,7 +38,7 @@ from segment_anything import build_sam, SamPredictor
 
 
 class ModelOutput(BaseModel):
-    image_mask_path: List[Tuple[str, Path]]
+    image_mask_path: List[Tuple[str, float, Path]]
 
 
 class Predictor(BasePredictor):
@@ -108,9 +108,9 @@ class Predictor(BasePredictor):
         image_mask_pils = [Image.fromarray(i*255) for i in image_masks]
         image_mask_pil_paths = []
         # save to tmp file
-        for i, (phrase, image_mask_pil) in enumerate(zip(pred_phrases, image_mask_pils)):
+        for i, (phrase, score, image_mask_pil) in enumerate(zip(pred_phrases, scores, image_mask_pils)):
             image_mask_pil.save(f"/tmp/image_mask{i}.png")
-            image_mask_pil_paths.append((phrase, Path(f"/tmp/image_mask{i}.png")))
+            image_mask_pil_paths.append((phrase, float(score), Path(f"/tmp/image_mask{i}.png")))
         print("Saved image mask")
         return ModelOutput(image_mask_path=image_mask_pil_paths)
 
@@ -148,7 +148,7 @@ def get_grounding_output(
         pred_phrase = get_phrases_from_posmap(
             logit > text_threshold, tokenized, tokenizer
         )
-        pred_phrases.append(pred_phrase + f"({str(logit.max().item())[:4]})")
+        pred_phrases.append(pred_phrase)
         scores.append(logit.max().item())
 
     return boxes_filt, torch.Tensor(scores), pred_phrases
