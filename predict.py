@@ -199,3 +199,4 @@ def show_box(box, ax, label):
         plt.Rectangle((x0, y0), w, h, edgecolor="green", facecolor=(0, 0, 0, 0), lw=1.5)
     )
     ax.text(x0, y0, label)
+
