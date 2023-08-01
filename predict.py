@@ -38,7 +38,9 @@ from segment_anything import build_sam, SamPredictor
 
 
 class ModelOutput(BaseModel):
-    image_mask_path: List[Tuple[str, float, Path]]
+    phrases: List[str]
+    scores: List[float]
+    image_mask_paths: List[Path]
 
 
 class Predictor(BasePredictor):
@@ -101,18 +103,22 @@ class Predictor(BasePredictor):
                     multimask_output = False,
                 )
         print("Got masks")
-        image_masks = [i.cpu().numpy()[0] for i in masks]
+        image_masks = [(i.cpu().numpy()[0]*255).astype("uint8") for i in masks]
         if dilation > 0:
             kernel = np.ones((dilation, dilation), np.uint8)
-            image_masks = [cv2.dilate(np.uint8(i), kernel, iterations=1) for i in image_masks]
-        image_mask_pils = [Image.fromarray(np.uint8(i*255)) for i in image_masks]
+            image_masks = [cv2.dilate(i, kernel, iterations=1) for i in image_masks]
+        image_mask_pils = [Image.fromarray(i) for i in image_masks]
         image_mask_pil_paths = []
         # save to tmp file
-        for i, (phrase, score, image_mask_pil) in enumerate(zip(pred_phrases, scores, image_mask_pils)):
+        for i, image_mask_pil in enumerate(image_mask_pils):
             image_mask_pil.save(f"/tmp/image_mask{i}.png")
-            image_mask_pil_paths.append((phrase, float(score), Path(f"/tmp/image_mask{i}.png")))
+            image_mask_pil_paths.append(Path(f"/tmp/image_mask{i}.png"))
         print("Saved image mask")
-        return ModelOutput(image_mask_path=image_mask_pil_paths)
+        return ModelOutput(
+            phrases=pred_phrases,
+            scores=scores,
+            image_mask_paths=image_mask_pil_paths
+        )
 
 
 def get_grounding_output(
@@ -149,9 +155,9 @@ def get_grounding_output(
             logit > text_threshold, tokenized, tokenizer
         )
         pred_phrases.append(pred_phrase)
-        scores.append(logit.max().item())
+        scores.append(float(logit.max().item()))
 
-    return boxes_filt, torch.Tensor(scores), pred_phrases
+    return boxes_filt, scores, pred_phrases
 
 
 def load_image(image_path):
